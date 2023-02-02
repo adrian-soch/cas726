@@ -1,2 +1,3 @@
 # cas726
-stub files for ROS2 mapping
+
+Implementation of occupancy mapping algorithm. Validated with turtlebot4 simulation in Gazebo.
