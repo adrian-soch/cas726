@@ -1,5 +1,6 @@
 #include "cas726/mapper.hh"
 #include <iostream>
+#include <algorithm>
 
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <tf2_eigen/tf2_eigen.h> 
@@ -24,8 +25,33 @@ void cas726::Mapper::laser_callback(const sensor_msgs::msg::LaserScan &scan) {
         tf.transform.rotation.z);
     transform.normalize();
 
-    // 2. iterate through all map cells and project them to the laser frame
+    // 2.a iterate through all map cells and project them to the laser frame
+    const float epsilon = 0.001;
 
+    for (int i=0; i<width_x_; ++i) {
+        for(int j=0; j<height_y_; ++j) {
+            int prob = *at(i,j);
+
+            // Transform coordinates
+
+            // Convert to polar
+
+            // look up ray @ theta
+            if(std::abs(l -r) < epsilon) {
+                prob += 1;
+            }
+            else if(r > (l+epsilon)) {
+                ; //add zero
+            }
+            else {
+                prob -= 1;
+            }
+
+            *at(i,j) = std::clamp(prob, INT8_MIN, INT8_MAX);
+        }
+    }
+
+    // 2.b
     // for (auto s : scan.ranges) {
     //     // Increment laser angle
     //     transform.theta += scan.angle_increment;
