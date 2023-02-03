@@ -3,7 +3,7 @@
 #include <algorithm>
 
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
-#include <tf2_eigen/tf2_eigen.h> 
+#include <tf2_eigen/tf2_eigen.h>
 
 void cas726::Mapper::laser_callback(const sensor_msgs::msg::LaserScan &scan) {
     RCLCPP_INFO(this->get_logger(), "Got laser message with %ld ranges", scan.ranges.size());  
@@ -28,15 +28,28 @@ void cas726::Mapper::laser_callback(const sensor_msgs::msg::LaserScan &scan) {
     // 2.a iterate through all map cells and project them to the laser frame
     const float epsilon = 0.001;
 
+    std::cout << "Max ang " << scan.angle_max << " Min ang " << scan.angle_min << " Inc " << scan.angle_increment << std::endl;
+
     for (int i=0; i<width_x_; ++i) {
         for(int j=0; j<height_y_; ++j) {
             int prob = *at(i,j);
 
             // Transform coordinates
+            Eigen::Vector2f m_coord {i*map_resolution_, j*map_resolution_};
+            Eigen::Vector2f s_coord {transform.x, transform.y};
 
             // Convert to polar
+            auto r = s_coord.norm();
+            auto theta = std::atan2(s_coord[1], s_coord[0]);
 
             // look up ray @ theta
+            int scan_num = 1;
+            while (theta < scan.angle_increment*scan_num && scan_num <= scan.ranges.size()) {
+                
+                ++scan_num;
+            }
+            
+
             if(std::abs(l -r) < epsilon) {
                 prob += 1;
             }
@@ -92,6 +105,12 @@ void cas726::Mapper::update_map_msg() {
             map_msg_.data.push_back(val);
         }
     }
+}
+
+float closest_value(std::vector<float> const& vec, float value) {
+    auto const it = std::lower_bound(vec.begin(), vec.end(), value);
+    if (it == vec.end()) { return -1; }
+    return *it;
 }
 
 int main(int argc, char ** argv)
