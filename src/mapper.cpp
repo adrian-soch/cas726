@@ -4,14 +4,11 @@
  * @version 0.1
  * @date 2023-02-05
  * 
- * @todo - Thread the grid update
- * 
  * @copyright Copyright (c) 2023
  * 
  */
 
 #include "cas726/mapper.hh"
-#include <iostream>
 #include <chrono>
 #include <algorithm>
 
@@ -27,16 +24,16 @@ int closest_value(std::vector<float> const& vec, float value) {
 }
 
 void cas726::Mapper::laser_callback(const sensor_msgs::msg::LaserScan &scan) {
-    // RCLCPP_INFO(this->get_logger(), "Got laser message with %ld ranges", scan.ranges.size());
     auto start = std::chrono::high_resolution_clock::now();
     
     // 0. lookup transform on TF
     geometry_msgs::msg::TransformStamped tf;
     try {
-        tf = tf_buffer_->lookupTransform(map_frame_, scan.header.frame_id, tf2::TimePointZero, tf2::durationFromSec(3));
+        tf = tf_buffer_->lookupTransform(map_frame_, scan.header.frame_id, tf2::TimePointZero, tf2::durationFromSec(0.2));
     }
     catch (const tf2::TransformException &ex) {
         RCLCPP_ERROR(this->get_logger(), "%s", ex.what());
+        return;
     }
  
     tf2::Quaternion q(tf.transform.rotation.x, tf.transform.rotation.y,
@@ -50,7 +47,9 @@ void cas726::Mapper::laser_callback(const sensor_msgs::msg::LaserScan &scan) {
     pose.normalize();
 
     // 2.a iterate through all map cells and project them to the laser frame
-    const float epsilon {0.02};
+    
+    // Use OpenMP to multi-thread this loop
+    #pragma omp parallel for
     for (int i=0; i<width_x_; ++i) {
         for(int j=0; j<height_y_; ++j) {
 
@@ -59,6 +58,7 @@ void cas726::Mapper::laser_callback(const sensor_msgs::msg::LaserScan &scan) {
                             (j+0.5)*map_resolution_ + map_msg_.info.origin.position.y, 
                             0.0);
 
+            // Sensor centric coordinate
             Eigen::Vector2f s_coord {map_cell.x - pose.x, map_cell.y - pose.y};
 
             // Convert to polar
@@ -74,12 +74,13 @@ void cas726::Mapper::laser_callback(const sensor_msgs::msg::LaserScan &scan) {
             int k = closest_value(angles, phi);
             auto l = scan.ranges.at(k);
 
+            const float alpha {0.025};
             int prob = *at(i,j);
-            if(std::abs(l - r) < epsilon) {
-                if(prob < INT8_MAX) {prob += 1;}
+            if(r > std::min(max_laser_range_, l + alpha) || std::abs(phi - angles.at(k) > beam_width_/2.f)) {
+                continue;
             }
-            else if(r > (l + epsilon)) {
-                ; //add zero
+            else if(l < max_laser_range_ && std::abs(r - l) < alpha) {
+                if(prob < INT8_MAX) {prob += 1;}
             }
             else {
                 if(prob > INT8_MIN) {prob -= 1;}
