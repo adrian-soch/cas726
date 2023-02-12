@@ -114,9 +114,9 @@ namespace cas726 {
         int8_t *map_;
 
         //helper function for getting a map cell
-        int8_t* at(int i, int j) {
+        int8_t* at(int x, int y) {
 
-            int index = i + j*width_x_;
+            int index = x + width_x_*y;
             if(index >= width_x_*height_y_) {
                 throw std::out_of_range ("Requested i,j outside of map.");
             }
