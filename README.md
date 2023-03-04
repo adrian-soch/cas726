@@ -1,5 +1,19 @@
-# cas726 - Occupancy Mapping
+# Robotics Algorithm Implementations
 
-Implementation of occupancy mapping algorithm. Validated with turtlebot4 simulation in Gazebo.
+## cas726
+
+This package contains the following modules:
+- occpancy grid mapping
+- lankmard-based mapping
 
 > Note: Code is for educational purposes and is not optimized for performance
+
+## obj_extractor
+
+This package contains an object detection module.
+
+## cas726_interfaces
+
+This contains message and service definitions.
+
+
