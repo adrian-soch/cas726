@@ -1,20 +1,16 @@
+import cv2
+import numpy as np
+
 import rclpy
 from rclpy.node import Node
+from cv_bridge import CvBridge
 
-from sensor_msgs.msg import Image
-from cas726_interfaces.srv import DetectObjects
 from cas726_interfaces.msg import BoundingBox
+from cas726_interfaces.srv import DetectObjects
 
-from cv_bridge import CvBridge # Package to convert between ROS and OpenCV Images
-
-import torch
-import numpy
-
-from torchvision.io.image import read_image
-from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2, FasterRCNN_ResNet50_FPN_V2_Weights
-from torchvision.utils import draw_bounding_boxes
-from torchvision.transforms.functional import to_pil_image
 import torchvision.transforms as transforms
+from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2, FasterRCNN_ResNet50_FPN_V2_Weights
+
 
 class ImageSubscriber(Node):
 
@@ -26,27 +22,66 @@ class ImageSubscriber(Node):
             'object_detector/detect',
             self.detect_callback)
 
-        # Used to convert between ROS and OpenCV images
         self.br = CvBridge()
 
-        # Step 1: Initialize model with the best available weights
+        # Initialize model with the best available weights
         self.weights = FasterRCNN_ResNet50_FPN_V2_Weights.DEFAULT
         self.model = fasterrcnn_resnet50_fpn_v2(weights=self.weights, box_score_thresh=0.9)
         self.model.eval()
-        # Step 2: Initialize the inference transforms
+
+        # Initialize the inference transforms
         self.preprocess = self.weights.transforms()
-        print("Creating service --> done")
+
+        # Initialize tranform to tensor
+        self.toTensor = transforms.ToTensor() 
+
+        self.get_logger().info('Service created.')
 
     def detect_callback(self, request, response):
-        print("Processing image")
         self.get_logger().info('Got image in frame: "%s"' % request.color.header.frame_id)
 
-        #TODO: implement this function.
-        # 1. convert request image to a tensor. Go via the opencv bridge and then convert to tensor
-        # 2. create a minibatch with just one image and call self.model to do inference
-        # 3. iterate through predictions and copy data into the response message
+        # Convert ROS Image message to OpenCV image
+        img = self.br.imgmsg_to_cv2(request.color)
 
-        print("Done")
+        # Convert to tensor
+        tensor = self.toTensor(img)
+
+        # Apply inference preprocessing transforms
+        batch = [self.preprocess(tensor)]
+
+        # Use the model and visualize the detections
+        detections = self.model(batch)[0]
+
+        # Get text labels for each detection in image
+        labels = [self.weights.meta["categories"][i] for i in detections["labels"]]
+        
+        response.detections = []
+        # loop over the detections
+        for i in range(0, len(detections["boxes"])):
+
+            confidence = detections["scores"][i]
+            CONF_THRESH = 0.7
+            if confidence > CONF_THRESH:
+
+                box = detections["boxes"][i].detach().cpu().numpy()
+                (startX, startY, endX, endY) = box.astype("int")
+
+                # fill bbox values
+                bbox = BoundingBox()
+                bbox.label = labels[i]
+                bbox.x_min = int(startX)
+                bbox.y_min = int(startY)
+                bbox.x_max = int(endX)
+                bbox.y_max = int(endY)
+                response.detections.append(bbox)
+                
+                # draw the bounding box and label on the image
+                cv2.rectangle(img, (bbox.x_min, bbox.y_min), (bbox.x_max, bbox.y_max), (50,220,50), 2)
+
+        # show the output image
+        cv2.imshow("Output", img)
+        cv2.waitKey(5)
+
         return response
 
 
@@ -56,10 +91,6 @@ def main(args=None):
     image_subscriber = ImageSubscriber()
 
     rclpy.spin(image_subscriber)
-
-    # Destroy the node explicitly
-    # (optional - otherwise it will be done automatically
-    # when the garbage collector destroys the node object)
     image_subscriber.destroy_node()
     rclpy.shutdown()
 
