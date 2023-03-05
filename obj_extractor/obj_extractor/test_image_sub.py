@@ -23,7 +23,7 @@ class MinimalSubscriber(Node):
             Image,
             '/front/color_image',
             self.listener_callback,
-            0)
+            5)
         self.subscription  # prevent unused variable warning
 
         self.sub_node = rclpy.create_node('client_node')

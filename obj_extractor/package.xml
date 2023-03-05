@@ -4,7 +4,7 @@
   <name>obj_extractor</name>
   <version>0.0.1</version>
   <description>Package that uses a pre-built torch vision model to extract object bounding boxes</description>
-  <maintainer email="tsv@tsv.ca">tsv</maintainer>
+  <maintainer email="a@s.ca">Adrian</maintainer>
   <license>GPLv3</license>
 
   <test_depend>ament_copyright</test_depend>

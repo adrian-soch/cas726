@@ -21,6 +21,7 @@ setup(
     entry_points={
         'console_scripts': [
             'obj_extractor = obj_extractor.image_subscriber:main',
+            'test_obj_extractor = obj_extractor.test_image_sub:main'
         ],
     },
 )

@@ -1,5 +1,4 @@
 import cv2
-import numpy as np
 
 import rclpy
 from rclpy.node import Node
@@ -11,6 +10,7 @@ from cas726_interfaces.srv import DetectObjects
 import torchvision.transforms as transforms
 from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2, FasterRCNN_ResNet50_FPN_V2_Weights
 
+DEBUG = False # Set to True to visualize detections
 
 class ImageSubscriber(Node):
 
@@ -42,6 +42,7 @@ class ImageSubscriber(Node):
 
         # Convert ROS Image message to OpenCV image
         img = self.br.imgmsg_to_cv2(request.color)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         # Convert to tensor
         tensor = self.toTensor(img)
@@ -75,12 +76,12 @@ class ImageSubscriber(Node):
                 bbox.y_max = int(endY)
                 response.detections.append(bbox)
                 
-                # draw the bounding box and label on the image
-                cv2.rectangle(img, (bbox.x_min, bbox.y_min), (bbox.x_max, bbox.y_max), (50,220,50), 2)
-
-        # show the output image
-        cv2.imshow("Output", img)
-        cv2.waitKey(5)
+                if DEBUG:
+                    # draw the bounding box and label on the image
+                    cv2.rectangle(img, (bbox.x_min, bbox.y_min), (bbox.x_max, bbox.y_max), (50,220,50), 2)
+        if DEBUG:
+            cv2.imshow("Output", img)
+            cv2.waitKey(5)
 
         return response
 

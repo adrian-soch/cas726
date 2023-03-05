@@ -16,4 +16,12 @@ This package contains an object detection module.
 
 This contains message and service definitions.
 
+# Developing
+
+Using [this](https://hub.docker.com/repository/docker/tstoyanov/ros2/general) prebuilt docker container. The following commands are required before running the launch files:
+
+```
+ros2 launch cas726 tugbot_bringup.launch.py
+export IGN_GAZEBO_RESOURCE_PATH=install/cas726/share/cas726/worlds/
+```
 
