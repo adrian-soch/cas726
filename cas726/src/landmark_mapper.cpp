@@ -10,6 +10,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 
 #include <pcl/common/common.h>
+#include <pcl/common/io.h>
 #include <pcl/filters/crop_box.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/filters/extract_indices.h>
@@ -24,9 +25,27 @@ void cas726::LandmarkMapper::image_callback(const sensor_msgs::msg::Image::Const
     std::cerr<<"Got a pair of images\n";
     //TODO
     //1. get current odom pose (base link in odom frame) as an Eigen::Affine3d
+    geometry_msgs::msg::TransformStamped stransform;
+    try
+    {
+        stransform = tf_buffer_->lookupTransform(odom_frame_, base_frame_,
+                                                    tf2::TimePointZero, tf2::durationFromSec(3));
+    }
+    catch (const tf2::TransformException &ex)
+    {
+        RCLCPP_ERROR(this->get_logger(), "%s", ex.what());
+    }
+    
     Eigen::Affine3d T; //
+    T = tf2::transformToEigen(stransform);
+
     //2. compute relative transform
     Eigen::Affine3d movement; //
+    movement = last_pose_.inverse() * T;
+
+    // std::cout << "Base-Odom" << T.matrix() << "\n" <<std::endl;
+    // std::cout << "Move" << movement.matrix()<< "\n" << std::endl;
+    
     //3. threshold for enough motion
     double transl = movement.translation().norm();
     Eigen::AngleAxisd rot(movement.rotation());
@@ -43,7 +62,8 @@ void cas726::LandmarkMapper::image_callback(const sensor_msgs::msg::Image::Const
         }
         //5. signal worker thread to wake up
         data_cv_.notify_all();
-        //6. set new last upodate pose
+
+        //6. set new last pose
         last_pose_ = T;
     }
 }
@@ -106,47 +126,82 @@ void cas726::LandmarkMapper::run() {
     
         //TODO: 
         //clear current landmarks
-        landmarks_.clear();
+        // landmarks_.clear();
 
         //iterate over detections
         for(auto det : result.get().second->detections) {
+            //For each object create a point cloud iterator (sensor_msgs::PointCloud2Iterator)
+            //iterate through point cloud and take out points that are within the bounding box
 
+            pcl::PointCloud<pcl::PointXYZ> cloud;
+            pcl::fromROSMsg(current_depth_cloud, cloud);
+            pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_ptr(new pcl::PointCloud<pcl::PointXYZ>(cloud));
+
+            std::cout << "det size " << det.x_min << " " << det.x_max << std::endl;
+            std::cout << "det size " << det.y_min << " " << det.y_max << std::endl;
+
+            pcl::PointCloud<pcl::PointXYZ> xyz_filtered_cloud;
+            pcl::CropBox<pcl::PointXYZ> crop;
+            crop.setInputCloud(cloud_ptr);
+            Eigen::Vector4f min_point = Eigen::Vector4f(det.x_min, det.y_min, 0.0, 0);
+            Eigen::Vector4f max_point = Eigen::Vector4f(det.x_max, det.y_max, 5.0, 0);
+            crop.setMin(min_point);
+            crop.setMax(max_point);
+            crop.filter(xyz_filtered_cloud);
+
+            std::cout << "Size of crop cloud" << xyz_filtered_cloud.size() << std::endl;
+
+            // Remove outliers
+            // pcl::PointCloud<pcl::PointXYZ>::Ptr sor_input_cloud(new pcl::PointCloud<pcl::PointXYZ>(xyz_filtered_cloud));
+            // pcl::PointCloud<pcl::PointXYZ>::Ptr sor_cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
+            // pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
+            // sor.setInputCloud(sor_input_cloud);
+            // sor.setMeanK(50);
+            // sor.setStddevMulThresh(1.0);
+            // sor.filter(*sor_cloud_filtered);
+            
+            //compute average x,y,z
+
+            Eigen::Vector4d centroid;
+            centroid << 0.0, 0.0, 0.0, 1.0;
+            // pcl::compute3DCentroid(xyz_filtered_cloud, centroid);
+
+            //transform point to map frame and save it in the landmark array
+            Eigen::Vector4d point_t;
+            point_t = last_pose_ * centroid;
+
+            geometry_msgs::msg::Point point;
+            point.x = point_t[0];
+            point.y = point_t[1];
+            point.z = point_t[2];
+
+            landmarks_.append("label", point);
+
+            this->publishPointCloud(cloud_pub_, cloud);
+            std::cout << "Cloud published." << std::endl;
         }
-
-        //For each object create a point cloud iterator (sensor_msgs::PointCloud2Iterator)
-        //iterate through point cloud and take out points that are within the bounding box
-
-        sensor_msgs::msg::PointCloud2 transformed_cloud;
-        pcl::PointCloud<pcl::PointXYZI> cloud;
-        pcl::fromROSMsg(depth_cloud_, cloud);
-        
-        //compute average x,y,z
-        //transform point to map frame and save it in the landmark array
-
-        //geometry_msgs::msg::Point 
-        //landmarks_.append("label", )
 
     }
 }
 
 //callback that publishes visualization markers
-void cas726::LandmarkMapper::update_callback(const std::vector<geometry_msgs::msg::Point>& points) {
+void cas726::LandmarkMapper::update_callback() {
     //TODO: publish the current array of landmarks as a visualization marker to display in rviz
-    visualization_msgs::msg::Marker::SharedPtr shere_list(new visualization_msgs::msg::Marker);
-    shere_list->header.frame_id = map_frame_;
-    shere_list->header.stamp = this->get_clock()->now();
-    shere_list->type = visualization_msgs::msg::Marker::SPHERE_LIST;
-    shere_list->action = visualization_msgs::msg::Marker::ADD;
-    shere_list->points = points;
-    shere_list->scale.x = 0.3; // in meters
-    shere_list->scale.y = 0.3;
-    shere_list->scale.z = 0.3;
+    visualization_msgs::msg::Marker::SharedPtr sphere_list(new visualization_msgs::msg::Marker);
+    sphere_list->header.frame_id = odom_frame_;
+    sphere_list->header.stamp = this->get_clock()->now();
+    sphere_list->type = visualization_msgs::msg::Marker::SPHERE_LIST;
+    sphere_list->action = visualization_msgs::msg::Marker::ADD;
+    sphere_list->points = landmarks_.points;
+    sphere_list->scale.x = 0.3; // in meters
+    sphere_list->scale.y = 0.3;
+    sphere_list->scale.z = 0.3;
 
     // Set green and alpha(opacity)
-    shere_list->color.g = 1.0;
-    shere_list->color.a = 1.0;
+    sphere_list->color.g = 1.0;
+    sphere_list->color.a = 1.0;
 
-    marker_publisher_.publish(*shere_list);
+    marker_publisher_->publish(*sphere_list);
     std::cout<<"tick tock\n";
 
     return;

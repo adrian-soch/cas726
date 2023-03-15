@@ -11,13 +11,16 @@
 #include "cas726_interfaces/msg/bounding_box.hpp"
 #include "cas726_interfaces/srv/detect_objects.hpp"
 
-#include "sensor_msgs/msg/image.hpp"
-#include "sensor_msgs/msg/point_cloud2.hpp"
+#include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
 //For message filters
 #include <message_filters/subscriber.h>
-#include <message_filters/time_synchronizer.h>    
+#include <message_filters/time_synchronizer.h>
+
+#include <pcl_conversions/pcl_conversions.h>
+#include <pcl/common/common.h>
 
 //for TF
 #include "tf2/exceptions.h"
@@ -91,7 +94,9 @@ class LandmarkMapper : public rclcpp::Node {
         //set up automatic timer for update publish 1 per second
         std::chrono::milliseconds update_duration(1000);
         timer_ = this->create_wall_timer(update_duration, 
-        std::bind(&LandmarkMapper::update_callback, this));	
+        std::bind(&LandmarkMapper::update_callback, this));
+
+        cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("obj_cloud", 1);
 
         // set up marker Viz publisher
         marker_publisher_ = this->create_publisher<visualization_msgs::msg::Marker>("markers", 1);
@@ -99,7 +104,6 @@ class LandmarkMapper : public rclcpp::Node {
         //Client to detect objects
         detect_client_ = this->create_client<cas726_interfaces::srv::DetectObjects>(detect_srv_topic_);
 
-        Landmarks landmarks_;
     }
 
     virtual ~LandmarkMapper() {}
@@ -119,6 +123,7 @@ class LandmarkMapper : public rclcpp::Node {
     void run();
 
 private:
+    Landmarks landmarks_;
     //should the program exit?
     bool quit_;
     //synchronization variables
@@ -132,6 +137,17 @@ private:
     sensor_msgs::msg::Image color_image_;
     sensor_msgs::msg::PointCloud2 depth_cloud_;
 
+    template <typename PointT>
+    void publishPointCloud(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr publisher,
+        pcl::PointCloud<PointT> point_cloud)
+    {
+        sensor_msgs::msg::PointCloud2::SharedPtr pc2_cloud(new sensor_msgs::msg::PointCloud2);
+        pcl::toROSMsg(point_cloud, *pc2_cloud);
+        pc2_cloud->header.frame_id = odom_frame_;
+        pc2_cloud->header.stamp = this->get_clock()->now();
+        publisher->publish(*pc2_cloud);
+    }
+
     //synchronized image callback. copies data to local member variables and returns
     void image_callback(const sensor_msgs::msg::Image::ConstSharedPtr &image, 
         const sensor_msgs::msg::PointCloud2::ConstSharedPtr &points);
@@ -142,7 +158,9 @@ private:
     //publishers and subscribers
     message_filters::Subscriber<sensor_msgs::msg::Image> image_subscriber_;
     message_filters::Subscriber<sensor_msgs::msg::PointCloud2> depth_cloud_subscriber_;
-    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_publisher_;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr marker_publisher_;
+
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_pub_;
     
     //synchronization policy 
     std::shared_ptr<message_filters::TimeSynchronizer<sensor_msgs::msg::Image, sensor_msgs::msg::PointCloud2>> image_sync_;
