@@ -42,9 +42,6 @@ void cas726::LandmarkMapper::image_callback(const sensor_msgs::msg::Image::Const
     //2. compute relative transform
     Eigen::Affine3d movement; //
     movement = last_pose_.inverse() * T;
-
-    // std::cout << "Base-Odom" << T.matrix() << "\n" <<std::endl;
-    // std::cout << "Move" << movement.matrix()<< "\n" << std::endl;
     
     //3. threshold for enough motion
     double transl = movement.translation().norm();
@@ -124,7 +121,6 @@ void cas726::LandmarkMapper::run() {
 
         std::cerr<<"Resuts received, we have "<<result.get().second->detections.size()<<" objects\n";
     
-        //TODO: 
         //clear current landmarks
         // landmarks_.clear();
 
@@ -137,47 +133,75 @@ void cas726::LandmarkMapper::run() {
             pcl::fromROSMsg(current_depth_cloud, cloud);
             pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_ptr(new pcl::PointCloud<pcl::PointXYZ>(cloud));
 
-            std::cout << "det size " << det.x_min << " " << det.x_max << std::endl;
-            std::cout << "det size " << det.y_min << " " << det.y_max << std::endl;
+            pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_cluster(new pcl::PointCloud<pcl::PointXYZ>);
 
-            pcl::PointCloud<pcl::PointXYZ> xyz_filtered_cloud;
-            pcl::CropBox<pcl::PointXYZ> crop;
-            crop.setInputCloud(cloud_ptr);
-            Eigen::Vector4f min_point = Eigen::Vector4f(det.x_min, det.y_min, 0.0, 0);
-            Eigen::Vector4f max_point = Eigen::Vector4f(det.x_max, det.y_max, 5.0, 0);
-            crop.setMin(min_point);
-            crop.setMax(max_point);
-            crop.filter(xyz_filtered_cloud);
+            const int height = current_depth_cloud.height;
+            // Assuming 1:1 corespondance between camera and depth cloud points
+            // Assuming organized pc
+            // Convert image -> pc coordinates
+            int idx_h_max = height - det.y_min;
+            int idx_h_min = height - det.y_max;
+            int idx_w_min = det.x_min;
+            int idx_w_max = det.x_max;
 
-            std::cout << "Size of crop cloud" << xyz_filtered_cloud.size() << std::endl;
+            std::cout << "det" << det.y_max << " " << det.y_min << std::endl;
+
+
+            for(int i=idx_w_min; i<idx_w_max; ++i) {
+                for(int j=idx_h_min; j<idx_h_max; ++j) {
+                    cloud_cluster->points.push_back(cloud.at(i, j));
+                }
+            }
+
+            std::cout << "det" << det.y_max << " " << det.y_min << std::endl;
+            std::cout << "cloud info " << cloud_cluster->width << " " << cloud_cluster->size() << std::endl;
+
 
             // Remove outliers
-            // pcl::PointCloud<pcl::PointXYZ>::Ptr sor_input_cloud(new pcl::PointCloud<pcl::PointXYZ>(xyz_filtered_cloud));
-            // pcl::PointCloud<pcl::PointXYZ>::Ptr sor_cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
-            // pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
-            // sor.setInputCloud(sor_input_cloud);
-            // sor.setMeanK(50);
-            // sor.setStddevMulThresh(1.0);
-            // sor.filter(*sor_cloud_filtered);
+            pcl::PointCloud<pcl::PointXYZ>::Ptr sor_cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
+            pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
+            sor.setInputCloud(cloud_cluster);
+            sor.setMeanK(50);
+            sor.setStddevMulThresh(1.0);
+            sor.filter(*sor_cloud_filtered);
             
             //compute average x,y,z
-
             Eigen::Vector4d centroid;
-            centroid << 0.0, 0.0, 0.0, 1.0;
-            // pcl::compute3DCentroid(xyz_filtered_cloud, centroid);
+            pcl::compute3DCentroid(*sor_cloud_filtered, centroid);
+
+            
+            std::cout << "cloud info " << sor_cloud_filtered->width << " " << sor_cloud_filtered->size() << std::endl;
+
+
+            geometry_msgs::msg::TransformStamped stransform;
+            try
+            {
+                stransform = tf_buffer_->lookupTransform(odom_frame_, base_frame_,
+                                                            tf2::TimePointZero, tf2::durationFromSec(0.5));
+            }
+            catch (const tf2::TransformException &ex)
+            {
+                RCLCPP_ERROR(this->get_logger(), "%s", ex.what());
+            }
+            
+            Eigen::Affine3d T; //
+            T = tf2::transformToEigen(stransform);
 
             //transform point to map frame and save it in the landmark array
             Eigen::Vector4d point_t;
-            point_t = last_pose_ * centroid;
+            point_t = T * centroid;
 
             geometry_msgs::msg::Point point;
             point.x = point_t[0];
             point.y = point_t[1];
             point.z = point_t[2];
 
-            landmarks_.append("label", point);
+            // Only add markers with real values
+            if(! (std::isnan(point_t[0]) || std::isnan(point_t[1]) || std::isnan(point_t[2]))) {
+                landmarks_.append("label", point);
+            }
 
-            this->publishPointCloud(cloud_pub_, cloud);
+            this->publishPointCloud(cloud_pub_, *sor_cloud_filtered);
             std::cout << "Cloud published." << std::endl;
         }
 

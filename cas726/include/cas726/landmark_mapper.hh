@@ -56,7 +56,7 @@ class Landmarks {
 /**
  * Landmark Mapper is a class that creates a map of landmarks. Each landmark is 
  * detected in the RGB images as an object of interest using a service call to a
- * python node running a standard model. Landmarks are then tracked with an EKF.
+ * python node running a standard model.
  */
 class LandmarkMapper : public rclcpp::Node {
     public:
