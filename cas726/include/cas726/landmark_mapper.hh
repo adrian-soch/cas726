@@ -35,22 +35,74 @@ namespace cas726 {
 // Helper Class
 class Landmarks {
     public:
-
         void append(const std::string &label, 
             const geometry_msgs::msg::Point &point) {
             labels.push_back(label);
             points.push_back(point);
         }
+
+        /**
+         * @brief Simple data association. Only add a landmark
+         *        if it has not been seen before based on distance
+         *        threshold.
+         * 
+         * @param label 
+         * @param point 
+         */
+        void appendNewLandmarkOnly(const std::string &label, 
+            const geometry_msgs::msg::Point &point) {
+
+            int size = points.size();
+            if(size == 0) {
+                labels.push_back(label);
+                points.push_back(point);
+
+                return;
+            }
+
+            bool seen = false;
+            for(int i=0; i < size; ++i) {
+                if(abs(point.x - points[i].x) < x_thresh_ &&
+                abs(point.y - points[i].y) < y_thresh_ &&
+                label == labels[i]) {
+                    seen = true;
+                }
+
+            }
+            if(!seen) {
+                labels.push_back(label);
+                points.push_back(point);
+            }
+        }
         
+        /**
+         * @brief Removes all landmarks
+         * 
+         */
         void clear() {
             labels.clear();
             points.clear();
+        }
+
+        /**
+         * @brief Set the Thresh object for data association
+         * 
+         * @param x_thresh 
+         * @param y_thresh 
+         */
+        void setThresh(float x_thresh, float y_thresh) {
+            x_thresh_ = abs(x_thresh);
+            y_thresh_ = abs(y_thresh);
         }
 
         // Struct of Vectors used so we can
         //  pass the points to other functions
         std::vector<std::string> labels;
         std::vector<geometry_msgs::msg::Point> points;
+
+    private:
+        float x_thresh_ = 0.6; //meters
+        float y_thresh_ = 0.6; //meters
 };
 
 /**
@@ -97,6 +149,7 @@ class LandmarkMapper : public rclcpp::Node {
         std::bind(&LandmarkMapper::update_callback, this));
 
         cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("obj_cloud", 1);
+        cloud_pub2_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("obj_cloud2", 1);
 
         // set up marker Viz publisher
         marker_publisher_ = this->create_publisher<visualization_msgs::msg::Marker>("markers", 1);
@@ -160,7 +213,7 @@ private:
     message_filters::Subscriber<sensor_msgs::msg::PointCloud2> depth_cloud_subscriber_;
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr marker_publisher_;
 
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_pub_, cloud_pub2_;
     
     //synchronization policy 
     std::shared_ptr<message_filters::TimeSynchronizer<sensor_msgs::msg::Image, sensor_msgs::msg::PointCloud2>> image_sync_;

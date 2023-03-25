@@ -5,8 +5,6 @@
 
 #include <rclcpp/executor.hpp>
 
-#include <sensor_msgs/point_cloud2_iterator.hpp>
-
 #include <pcl_conversions/pcl_conversions.h>
 
 #include <pcl/common/common.h>
@@ -14,6 +12,7 @@
 #include <pcl/filters/crop_box.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/filters/extract_indices.h>
+#include <pcl/filters/passthrough.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 
 using namespace std::chrono_literals;
@@ -22,8 +21,8 @@ using namespace std::chrono_literals;
 void cas726::LandmarkMapper::image_callback(const sensor_msgs::msg::Image::ConstSharedPtr &image, 
             const sensor_msgs::msg::PointCloud2::ConstSharedPtr &depth_cloud) {
 
-    std::cerr<<"Got a pair of images\n";
-    //TODO
+    // std::cerr<<"Got a pair of images\n";
+
     //1. get current odom pose (base link in odom frame) as an Eigen::Affine3d
     geometry_msgs::msg::TransformStamped stransform;
     try
@@ -47,6 +46,7 @@ void cas726::LandmarkMapper::image_callback(const sensor_msgs::msg::Image::Const
     double transl = movement.translation().norm();
     Eigen::AngleAxisd rot(movement.rotation());
     double angl = rot.angle();
+
     //4. if we moved enough, lock the mutex and load up data
     if(transl > 1 || fabsf(angl) > M_PI/4) {
         {
@@ -78,9 +78,9 @@ void cas726::LandmarkMapper::run() {
         {
         //acquire mutex access
         std::unique_lock<std::mutex> mutex_locker(data_mutex_); 
-        std::cerr<<"worker thread sleeping\n"; 
+        // std::cerr<<"worker thread sleeping\n"; 
         data_cv_.wait(mutex_locker);     //release lock and wait to be woken up
-        std::cerr<<"worker thread woke up\n";
+        // std::cerr<<"worker thread woke up\n";
 
         //copy data
         current_color_image = color_image_;
@@ -89,7 +89,7 @@ void cas726::LandmarkMapper::run() {
 
         if(!rclcpp::ok()||quit_) break; // check if we are asked to quit
         
-        std::cerr<<"worker thread assembling request\n"; 
+        // std::cerr<<"worker thread assembling request\n"; 
         //load up color image in service request
         auto request = std::make_shared<cas726_interfaces::srv::DetectObjects::Request>();
         request->color = color_image_;
@@ -105,73 +105,71 @@ void cas726::LandmarkMapper::run() {
     
         //lambda magic to unblock once response is available 
         auto callback =  [this](rclcpp::Client<cas726_interfaces::srv::DetectObjects>::SharedFutureWithRequest future) { 
-        std::cerr<<"Result callback\n";
+        // std::cerr<<"Result callback\n";
             auto response = future.get();
         std::cerr<<"Response has "<<response.second->detections.size()<<" objects\n";
         this->res_cv_.notify_all(); 
         };
         auto result = detect_client_->async_send_request(request, std::move(callback));
-        std::cerr<<"Request sent\n";
+        // std::cerr<<"Request sent\n";
         {
         // Wait for the result.
         std::unique_lock<std::mutex> response_locker(res_mutex_);
-        std::cerr<<"Waiting for result\n";
+        // std::cerr<<"Waiting for result\n";
         res_cv_.wait(response_locker);
         }
 
         std::cerr<<"Resuts received, we have "<<result.get().second->detections.size()<<" objects\n";
+        RCLCPP_INFO(get_logger(), "Starting cloud ops.");
+        auto start = std::chrono::high_resolution_clock::now();
     
-        //clear current landmarks
-        // landmarks_.clear();
+        pcl::PointCloud<pcl::PointXYZ> cloud;
+        pcl::fromROSMsg(current_depth_cloud, cloud);
+        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_ptr(new pcl::PointCloud<pcl::PointXYZ>(cloud));
 
-        //iterate over detections
         for(auto det : result.get().second->detections) {
-            //For each object create a point cloud iterator (sensor_msgs::PointCloud2Iterator)
-            //iterate through point cloud and take out points that are within the bounding box
 
-            pcl::PointCloud<pcl::PointXYZ> cloud;
-            pcl::fromROSMsg(current_depth_cloud, cloud);
-            pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_ptr(new pcl::PointCloud<pcl::PointXYZ>(cloud));
+            pcl::PointCloud<pcl::PointXYZ>::Ptr crop_cloud(new pcl::PointCloud<pcl::PointXYZ>);
 
-            pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_cluster(new pcl::PointCloud<pcl::PointXYZ>);
-
-            const int height = current_depth_cloud.height;
             // Assuming 1:1 corespondance between camera and depth cloud points
             // Assuming organized pc
-            // Convert image -> pc coordinates
-            int idx_h_max = height - det.y_min;
-            int idx_h_min = height - det.y_max;
+
+            int idx_h_max = det.y_max;
+            int idx_h_min = det.y_min;
             int idx_w_min = det.x_min;
             int idx_w_max = det.x_max;
 
-            std::cout << "det" << det.y_max << " " << det.y_min << std::endl;
-
-
+            // Create a cluster with points within each bounding box
             for(int i=idx_w_min; i<idx_w_max; ++i) {
                 for(int j=idx_h_min; j<idx_h_max; ++j) {
-                    cloud_cluster->points.push_back(cloud.at(i, j));
+                    crop_cloud->points.push_back(cloud.at(i, j));
                 }
             }
 
-            std::cout << "det" << det.y_max << " " << det.y_min << std::endl;
-            std::cout << "cloud info " << cloud_cluster->width << " " << cloud_cluster->size() << std::endl;
+            pcl::VoxelGrid<pcl::PointXYZ> voxel_filter;
+            voxel_filter.setInputCloud(crop_cloud);
+            voxel_filter.setLeafSize(0.0015, 0.0015, 0.0015);
+            voxel_filter.filter(*crop_cloud);
 
+            // Assume robot is always on a level floor
+            // Remove points in cloud that are at the z height of the floor
+            pcl::PassThrough<pcl::PointXYZ> pass_z;
+            pass_z.setInputCloud(crop_cloud);
+            pass_z.setFilterFieldName("z");
+            pass_z.setFilterLimits(-0.4, 4.0);
+            pass_z.filter(*crop_cloud);
 
-            // Remove outliers
+            // // Remove outliers
             pcl::PointCloud<pcl::PointXYZ>::Ptr sor_cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
             pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
-            sor.setInputCloud(cloud_cluster);
-            sor.setMeanK(50);
+            sor.setInputCloud(crop_cloud);
+            sor.setMeanK(5);
             sor.setStddevMulThresh(1.0);
             sor.filter(*sor_cloud_filtered);
-            
+
             //compute average x,y,z
             Eigen::Vector4d centroid;
             pcl::compute3DCentroid(*sor_cloud_filtered, centroid);
-
-            
-            std::cout << "cloud info " << sor_cloud_filtered->width << " " << sor_cloud_filtered->size() << std::endl;
-
 
             geometry_msgs::msg::TransformStamped stransform;
             try
@@ -183,8 +181,7 @@ void cas726::LandmarkMapper::run() {
             {
                 RCLCPP_ERROR(this->get_logger(), "%s", ex.what());
             }
-            
-            Eigen::Affine3d T; //
+            Eigen::Affine3d T;
             T = tf2::transformToEigen(stransform);
 
             //transform point to map frame and save it in the landmark array
@@ -197,12 +194,17 @@ void cas726::LandmarkMapper::run() {
             point.z = point_t[2];
 
             // Only add markers with real values
-            if(! (std::isnan(point_t[0]) || std::isnan(point_t[1]) || std::isnan(point_t[2]))) {
-                landmarks_.append("label", point);
+            if(!(std::isnan(point_t[0]) || std::isnan(point_t[1]) || std::isnan(point_t[2]))) {
+
+                // Only add new markers based on distance from past markers
+                landmarks_.appendNewLandmarkOnly(det.label, point);
             }
 
-            this->publishPointCloud(cloud_pub_, *sor_cloud_filtered);
-            std::cout << "Cloud published." << std::endl;
+            this->publishPointCloud(cloud_pub_, *crop_cloud);
+            this->publishPointCloud(cloud_pub2_, *sor_cloud_filtered);
+
+            auto stop = std::chrono::high_resolution_clock::now();
+            RCLCPP_INFO(get_logger(), "Execution time: %ld (ns)\n", (stop-start).count());
         }
 
     }
@@ -226,7 +228,6 @@ void cas726::LandmarkMapper::update_callback() {
     sphere_list->color.a = 1.0;
 
     marker_publisher_->publish(*sphere_list);
-    std::cout<<"tick tock\n";
 
     return;
 }
