@@ -80,8 +80,10 @@ class ImageSubscriber(Node):
                     # draw the bounding box and label on the image
                     cv2.rectangle(img, (bbox.x_min, bbox.y_min), (bbox.x_max, bbox.y_max), (50,220,50), 2)
         if DEBUG:
-            cv2.imshow("Output", img)
-            cv2.waitKey(5)
+            # cv2.imshow("Output", img)
+            # cv2.waitKey(5)
+
+            cv2.imwrite('./detection.jpg', img)
 
         return response
 
